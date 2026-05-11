@@ -1,4 +1,3 @@
- railway.toml
 [build]
 builder = "nixpacks"
 buildCommand = "pip install -r requirements.txt"
