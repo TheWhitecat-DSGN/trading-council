@@ -1,0 +1,11 @@
+ railway.toml
+[build]
+builder = "nixpacks"
+buildCommand = "pip install -r requirements.txt"
+
+[deploy]
+startCommand = "gunicorn server:app"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
