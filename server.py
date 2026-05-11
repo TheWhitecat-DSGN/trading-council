@@ -31,12 +31,21 @@ running = False
 
 def run_analysis():
     """Run the full trading council analysis"""
+    # Import here to avoid issues
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from data.market_data import fetch_candle_data
     from agents.technical_agent import TechnicalAgent
     from agents.price_action_agent import PriceActionAgent
     from agents.macro_agent import MacroAgent
     from agents.risk_agent import RiskAgent
     from utils.telegram_bot import send_signal_message, format_signal
+
+    # Check telegram config
+    if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
+        logger.error("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set! Check environment variables.")
+        return []
+
+    logger.info(f"Telegram config OK - Bot: ...{config.TELEGRAM_BOT_TOKEN[-6:]}, Chat: {config.TELEGRAM_CHAT_ID}")
 
     symbols = [config.PRIMARY_SYMBOL] + config.FOREX_SYMBOLS
     results = []
@@ -105,16 +114,20 @@ def run_analysis():
             }
 
             # Send to Telegram
-            send_signal_message(analysis)
+            success = send_signal_message(analysis)
+            if success:
+                logger.info(f"{symbol}: {overall} ({round(avg_conf)}%) - sent to Telegram OK")
+            else:
+                logger.error(f"{symbol}: {overall} ({round(avg_conf)}%) - FAILED to send to Telegram")
+
             last_runs[symbol] = datetime.now().isoformat()
             results.append(analysis)
-            logger.info(f"{symbol}: {overall} ({round(avg_conf)}%) - sent to Telegram")
 
             # Delay between symbols to avoid rate limits
             time.sleep(5)
 
         except Exception as e:
-            logger.error(f"Error analyzing {symbol}: {e}")
+            logger.error(f"Error analyzing {symbol}: {e}", exc_info=True)
 
     return results
 
@@ -124,9 +137,17 @@ def scheduled_worker():
     global running
     running = True
 
+    # Wait 10 seconds for service to fully start
+    time.sleep(10)
+
     # Run immediately on startup
-    logger.info("Starting AI Trading Council...")
-    run_analysis()
+    logger.info("=" * 50)
+    logger.info("Starting AI Trading Council scheduled worker...")
+    logger.info("=" * 50)
+    try:
+        run_analysis()
+    except Exception as e:
+        logger.error(f"Initial run failed: {e}", exc_info=True)
 
     # Then every hour
     while running:
@@ -141,7 +162,7 @@ def scheduled_worker():
         try:
             run_analysis()
         except Exception as e:
-            logger.error(f"Scheduled run failed: {e}")
+            logger.error(f"Scheduled run failed: {e}", exc_info=True)
 
 
 # Start background worker
@@ -157,6 +178,7 @@ def index():
         "symbols": [config.PRIMARY_SYMBOL] + config.FOREX_SYMBOLS,
         "last_runs": last_runs,
         "next_run": "Every hour at :00",
+        "telegram_configured": bool(config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID),
     }
 
 
@@ -165,7 +187,7 @@ def manual_run():
     """Trigger a manual analysis run"""
     try:
         results = run_analysis()
-        return {"status": "ok", "results": len(results)}
+        return {"status": "ok", "results": len(results), "telegram_configured": bool(config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID)}
     except Exception as e:
         return {"status": "error", "message": str(e)}, 500
 
