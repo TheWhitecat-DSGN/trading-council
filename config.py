@@ -8,7 +8,7 @@ MAX_RISK_PERCENT = 2.0
 
 # Trading
 PRIMARY_SYMBOL = os.environ.get("PRIMARY_SYMBOL", "XAUUSD")
-FOREX_SYMBOLS = os.environ.get("FOREX_SYMBOLS", "EURUSD,GBPUSD,USDJPY").split(",")
+FOREX_SYMBOLS = os.environ.get("FOREX_SYMBOLS", "EURUSD,USDJPY").split(",")
 TIMEFRAME = os.environ.get("TIMEFRAME", "1h")
 TRADING_STYLE = "swing"
 
