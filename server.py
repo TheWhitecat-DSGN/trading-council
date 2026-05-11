@@ -18,6 +18,14 @@ sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 from flask import Flask
 import config
 
+# Hardcode telegram config as ultimate fallback ( Railway env var issues )
+if not config.TELEGRAM_BOT_TOKEN:
+    config.TELEGRAM_BOT_TOKEN = '8652434039:AAHw0wdni8Cq9qzM9ONo2itbGIG3R43ABr4'
+    print('[CONFIG] Using hardcoded TELEGRAM_BOT_TOKEN')
+if not config.TELEGRAM_CHAT_ID:
+    config.TELEGRAM_CHAT_ID = '1027083696'
+    print('[CONFIG] Using hardcoded TELEGRAM_CHAT_ID')
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
