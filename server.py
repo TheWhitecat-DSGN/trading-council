@@ -18,13 +18,11 @@ sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 from flask import Flask
 import config
 
-# Hardcode telegram config as ultimate fallback ( Railway env var issues )
+# Hardcode telegram config as ultimate fallback (Railway env var issues)
 if not config.TELEGRAM_BOT_TOKEN:
     config.TELEGRAM_BOT_TOKEN = '8652434039:AAHw0wdni8Cq9qzM9ONo2itbGIG3R43ABr4'
-    print('[CONFIG] Using hardcoded TELEGRAM_BOT_TOKEN')
 if not config.TELEGRAM_CHAT_ID:
     config.TELEGRAM_CHAT_ID = '1027083696'
-    print('[CONFIG] Using hardcoded TELEGRAM_CHAT_ID')
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -35,109 +33,113 @@ app = Flask(__name__)
 # Track last run
 last_runs = {}
 running = False
+is_running_now = False  # Prevent concurrent runs
 
 
 def run_analysis():
     """Run the full trading council analysis"""
-    # Import here to avoid issues
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from data.market_data import fetch_candle_data
-    from agents.technical_agent import TechnicalAgent
-    from agents.price_action_agent import PriceActionAgent
-    from agents.macro_agent import MacroAgent
-    from agents.risk_agent import RiskAgent
-    from utils.telegram_bot import send_signal_message, format_signal
-
-    # Check telegram config
-    if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
-        logger.error("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set! Check environment variables.")
+    global is_running_now
+    
+    if is_running_now:
+        logger.info("Analysis already running, skipping...")
         return []
+    
+    is_running_now = True
+    
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from data.market_data import fetch_candle_data
+        from agents.technical_agent import TechnicalAgent
+        from agents.price_action_agent import PriceActionAgent
+        from agents.macro_agent import MacroAgent
+        from agents.risk_agent import RiskAgent
+        from utils.telegram_bot import send_signal_message
 
-    logger.info(f"Telegram config OK - Bot: ...{config.TELEGRAM_BOT_TOKEN[-6:]}, Chat: {config.TELEGRAM_CHAT_ID}")
+        if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
+            logger.error("Telegram config missing!")
+            return []
 
-    symbols = [config.PRIMARY_SYMBOL] + config.FOREX_SYMBOLS
-    results = []
+        symbols = [config.PRIMARY_SYMBOL] + config.FOREX_SYMBOLS
+        results = []
 
-    for symbol in symbols:
-        try:
-            logger.info(f"Analyzing {symbol}...")
+        for symbol in symbols:
+            try:
+                logger.info(f"Analyzing {symbol}...")
 
-            # Fetch data
-            df = fetch_candle_data(symbol, config.TIMEFRAME, 200)
-            if df is None or df.empty:
-                logger.warning(f"No data for {symbol}, skipping")
-                continue
+                df = fetch_candle_data(symbol, config.TIMEFRAME, 200)
+                if df is None or df.empty:
+                    logger.warning(f"No data for {symbol}, skipping")
+                    continue
 
-            # Agent 1: Technical
-            tech_agent = TechnicalAgent()
-            tech_result = tech_agent.analyze(df)
+                # Agent 1: Technical
+                tech_agent = TechnicalAgent()
+                tech_result = tech_agent.analyze(df)
 
-            # Agent 2: Price Action
-            pa_agent = PriceActionAgent()
-            pa_result = pa_agent.analyze(df)
+                # Agent 2: Price Action
+                pa_agent = PriceActionAgent()
+                pa_result = pa_agent.analyze(df)
 
-            # Agent 3: Macro
-            macro_agent = MacroAgent()
-            macro_result = macro_agent.analyze(symbol)
+                # Agent 3: Macro
+                macro_agent = MacroAgent()
+                macro_result = macro_agent.analyze(symbol)
 
-            # Council Vote
-            agents = [tech_result, pa_result, macro_result]
-            bullish = sum(1 for a in agents if a["signal"] == "BULLISH")
-            bearish = sum(1 for a in agents if a["signal"] == "BEARISH")
+                # Council Vote
+                agents_list = [tech_result, pa_result, macro_result]
+                bullish = sum(1 for a in agents_list if a["signal"] == "BULLISH")
+                bearish = sum(1 for a in agents_list if a["signal"] == "BEARISH")
 
-            if bullish > bearish and bullish >= 2:
-                overall = "BULLISH"
-            elif bearish > bullish and bearish >= 2:
-                overall = "BEARISH"
-            else:
-                overall = "NEUTRAL"
+                if bullish > bearish and bullish >= 2:
+                    overall = "BULLISH"
+                elif bearish > bullish and bearish >= 2:
+                    overall = "BEARISH"
+                else:
+                    overall = "NEUTRAL"
 
-            avg_conf = sum(a["confidence"] for a in agents) / len(agents)
+                avg_conf = sum(a["confidence"] for a in agents_list) / len(agents_list)
 
-            # Agent 4: Risk
-            risk_agent = RiskAgent()
-            risk_result = risk_agent.calculate(df, overall, {})
+                # Agent 4: Risk
+                risk_agent = RiskAgent()
+                risk_result = risk_agent.calculate(df, overall, {})
 
-            # Summary
-            summary_parts = []
-            for a in agents:
-                if a["signal"] != "NEUTRAL":
-                    summary_parts.append(a["rationale"].split(".")[0])
-            if not risk_result.get("is_valid"):
-                summary_parts.append("Risk parameters not met - skip trade.")
-            summary = " | ".join(summary_parts[:3]) if summary_parts else "No strong signals."
+                # Summary
+                summary_parts = []
+                for a in agents_list:
+                    if a["signal"] != "NEUTRAL":
+                        summary_parts.append(a["rationale"].split(".")[0])
+                if not risk_result.get("is_valid"):
+                    summary_parts.append("Risk parameters not met - skip trade.")
+                summary = " | ".join(summary_parts[:3]) if summary_parts else "No strong signals."
 
-            analysis = {
-                "symbol": symbol,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "council": {
-                    "technical": tech_result,
-                    "price_action": pa_result,
-                    "macro": macro_result,
-                },
-                "overall_signal": overall,
-                "overall_confidence": round(avg_conf),
-                "risk": risk_result,
-                "summary": summary,
-            }
+                analysis = {
+                    "symbol": symbol,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "council": {
+                        "technical": tech_result,
+                        "price_action": pa_result,
+                        "macro": macro_result,
+                    },
+                    "overall_signal": overall,
+                    "overall_confidence": round(avg_conf),
+                    "risk": risk_result,
+                    "summary": summary,
+                }
 
-            # Send to Telegram
-            success = send_signal_message(analysis)
-            if success:
-                logger.info(f"{symbol}: {overall} ({round(avg_conf)}%) - sent to Telegram OK")
-            else:
-                logger.error(f"{symbol}: {overall} ({round(avg_conf)}%) - FAILED to send to Telegram")
+                # Send to Telegram - only send if there's a valid trade OR overall is strong
+                send_signal_message(analysis)
 
-            last_runs[symbol] = datetime.now().isoformat()
-            results.append(analysis)
+                last_runs[symbol] = datetime.now().isoformat()
+                results.append(analysis)
+                logger.info(f"{symbol}: {overall} ({round(avg_conf)}%)")
 
-            # Delay between symbols to avoid rate limits
-            time.sleep(5)
+                # Delay between symbols
+                time.sleep(5)
 
-        except Exception as e:
-            logger.error(f"Error analyzing {symbol}: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Error analyzing {symbol}: {e}", exc_info=True)
 
-    return results
+        return results
+    finally:
+        is_running_now = False
 
 
 def scheduled_worker():
@@ -145,24 +147,26 @@ def scheduled_worker():
     global running
     running = True
 
-    # Wait 10 seconds for service to fully start
-    time.sleep(10)
+    # Wait 15 seconds for service to fully start
+    time.sleep(15)
 
     # Run immediately on startup
     logger.info("=" * 50)
-    logger.info("Starting AI Trading Council scheduled worker...")
+    logger.info("AI Trading Council starting...")
     logger.info("=" * 50)
     try:
         run_analysis()
     except Exception as e:
         logger.error(f"Initial run failed: {e}", exc_info=True)
 
-    # Then every hour
+    # Then every hour on the hour
     while running:
         now = datetime.now()
-        # Next hour mark
         next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         wait_seconds = (next_run - now).total_seconds()
+
+        if wait_seconds < 60:
+            wait_seconds += 3600  # Skip if less than 1 min away
 
         logger.info(f"Next analysis at {next_run.strftime('%H:%M')} (waiting {int(wait_seconds)}s)")
         time.sleep(wait_seconds)
@@ -188,16 +192,6 @@ def index():
         "next_run": "Every hour at :00",
         "telegram_configured": bool(config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID),
     }
-
-
-@app.route('/run')
-def manual_run():
-    """Trigger a manual analysis run"""
-    try:
-        results = run_analysis()
-        return {"status": "ok", "results": len(results), "telegram_configured": bool(config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID)}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}, 500
 
 
 @app.route('/health')
