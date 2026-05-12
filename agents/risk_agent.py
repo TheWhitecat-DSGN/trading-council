@@ -40,12 +40,19 @@ class RiskAgent:
         # === Stop Loss (based on ATR) ===
         sl_distance = atr_value * config.ATR_SL_MULTIPLIER
         
+        # Determine decimal places based on symbol type
+        # This is passed in via agents_result or detected from price magnitude
+        if current_price > 100:  # XAUUSD, USDJPY
+            dp = 2 if current_price > 1000 else 3  # Gold vs JPY pairs
+        else:
+            dp = 5  # EURUSD, GBPUSD etc.
+
         if signal == "BULLISH":
             entry_price = current_price
-            sl_price = round(entry_price - sl_distance, 2)
+            sl_price = round(entry_price - sl_distance, dp)
         elif signal == "BEARISH":
             entry_price = current_price
-            sl_price = round(entry_price + sl_distance, 2)
+            sl_price = round(entry_price + sl_distance, dp)
         else:
             return self._empty_result()
         
@@ -54,7 +61,7 @@ class RiskAgent:
         tp_price = round(
             entry_price + (risk_pips * config.DEFAULT_RR_RATIO) if signal == "BULLISH"
             else entry_price - (risk_pips * config.DEFAULT_RR_RATIO),
-            2
+            dp
         )
         
         # === Lot Size Calculation ===
@@ -65,31 +72,47 @@ class RiskAgent:
         # For XAUUSD, 1 lot = $1 per $0.01 move roughly
         # So for cent account: lot = risk_cents / (sl_distance * 100)
         
-        risk_cents = risk_amount * 100  # 300 cents
-        sl_points = sl_distance  # In price units
-        
-        # Conservative lot for XAUUSD cent account
-        # 0.01 lot = ~1 cent per point on cent account
-        lot_size = risk_cents / (sl_points * 100)
-        
-        # Round to nearest 0.01
-        lot_size = round(max(0.01, lot_size), 2)
-        
-        # Cap maximum lot size for $150 account
-        max_lot = 0.10  # Don't risk more than 10 cents lot
-        lot_size = min(lot_size, max_lot)
-        
+        risk_cents = risk_amount * 100  # 300 cents ($3 = 300 cents)
+        sl_points = abs(entry_price - sl_price)  # Distance in price
+
+        # === SL Sanity Check ===
+        if sl_points < 1e-6:
+            return self._empty_result()
+
+        # === Lot Size Calculation ===
+        # Pip value depends on the pair
+        # XAUUSD: 1 lot = ~$1 per $0.01 move → 100 cents per $0.01
+        # EURUSD: 1 lot = ~$10 per 0.0001 move → $0.01 per pip per 0.001 lot
+        # USDJPY: 1 lot = ~¥1000 per 0.01 move
+        # Simplified for cent account:
+        #   lot = risk_cents / (sl_points / pip_size * pip_value_cents)
+
+        if current_price > 1000:  # XAUUSD
+            pip_size = 0.01
+            pip_value_cents = 1  # 1 cent per pip per 0.01 lot
+        elif current_price > 100:  # USDJPY
+            pip_size = 0.01
+            pip_value_cents = 0.65  # Approximate for JPY pairs
+        else:  # EURUSD, GBPUSD etc.
+            pip_size = 0.0001
+            pip_value_cents = 1  # 1 cent per pip per 0.01 lot
+
+        sl_pips = sl_points / pip_size
+        lot_size = risk_cents / (sl_pips * pip_value_cents) * 0.01
+        lot_size = round(max(0.01, min(lot_size, 0.10)), 2)  # Cap 0.01-0.10
+
         # === Actual Risk Calculation ===
-        actual_risk = (sl_points * lot_size * 100) / 100  # In USD
+        actual_risk_cents = sl_pips * pip_value_cents * (lot_size / 0.01)
+        actual_risk = actual_risk_cents / 100  # Convert cents to USD
         actual_risk_pct = (actual_risk / account_balance) * 100
-        
+
         # === RR Verification ===
         actual_rr = abs(tp_price - entry_price) / abs(entry_price - sl_price)
-        
+
         return {
             "agent": self.name,
             "direction": signal.lower(),
-            "entry_price": round(entry_price, 2),
+            "entry_price": round(entry_price, dp),
             "sl_price": sl_price,
             "tp_price": tp_price,
             "lot_size": lot_size,

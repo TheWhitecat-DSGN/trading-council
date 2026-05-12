@@ -96,6 +96,11 @@ def run_analysis():
 
                 avg_conf = sum(a["confidence"] for a in agents_list) / len(agents_list)
 
+                # Check ALMA validity — don't trade if ALMA too close
+                alma_valid = tech_result.get("details", {}).get("alma_valid", True)
+                if not alma_valid:
+                    avg_conf = min(avg_conf, 55)  # Cap confidence when ALMA unclear
+
                 # Agent 4: Risk
                 risk_agent = RiskAgent()
                 risk_result = risk_agent.calculate(df, overall, {})
