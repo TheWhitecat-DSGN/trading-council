@@ -9,7 +9,8 @@ import sys
 import threading
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 # Fix encoding
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -266,14 +267,18 @@ def scheduled_worker():
         now = datetime.now()
 
         # Check if it's 09:00 Bangkok time for daily summary
-        if now.hour == 9 and now.minute < 5:
-            if last_daily_summary is None or not last_daily_summary.startswith(now.strftime("%Y-%m-%d")):
+        bangkok_tz = ZoneInfo("Asia/Bangkok")
+        bangkok_now = datetime.now(bangkok_tz)
+        if bangkok_now.hour == 9 and bangkok_now.minute < 5:
+            if last_daily_summary is None or not last_daily_summary.startswith(bangkok_now.strftime("%Y-%m-%d")):
                 try:
                     send_daily_summary()
                 except Exception as e:
                     logger.error(f"Daily summary failed: {e}")
 
         # Wait until next hour
+        bangkok_tz = ZoneInfo("Asia/Bangkok")
+        now = datetime.now(bangkok_tz)
         next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         wait_seconds = (next_run - now).total_seconds()
 
