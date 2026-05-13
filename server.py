@@ -183,6 +183,17 @@ def send_daily_summary():
             lines.append(f"🌍 <b>Macro:</b> {macro_rationale}")
             lines.append("")
 
+        from data.market_data import get_current_price
+
+        # Decimal places per symbol type
+        def _price_dp(sym: str) -> int:
+            if sym == "XAUUSD":
+                return 2
+            elif "JPY" in sym:
+                return 3
+            else:
+                return 5
+
         for symbol in symbols:
             try:
                 df = fetch_candle_data(symbol, config.TIMEFRAME, 200)
@@ -195,7 +206,7 @@ def send_daily_summary():
                 vol = VolumeAgent()
                 vol_result = vol.analyze(df)
 
-                price = round(float(df["close"].iloc[-1]), 2)
+                price = round(get_current_price(symbol), _price_dp(symbol))
                 tech_signal = tech_result["signal"]
                 vol_signal = vol_result["signal"]
 
