@@ -13,21 +13,27 @@ class RiskAgent:
     def __init__(self):
         self.name = "Risk Agent"
     
-    def calculate(self, df, signal: str, agents_result: dict) -> dict:
+    def calculate(self, df, signal: str, agents_result: dict, symbol: str = "XAUUSD") -> dict:
         """
         Calculate position size, SL, TP for a trade
         
         :param df: OHLCV DataFrame
         :param signal: "BULLISH" or "BEARISH"
         :param agents_result: Combined result from all agents
+        :param symbol: Trading symbol for real-time price lookup
         """
         if df is None or df.empty:
             return self._empty_result()
         
-        close = df["close"].values.astype(float)
         high = df["high"].values.astype(float)
         low = df["low"].values.astype(float)
-        current_price = close[-1]
+
+        # Use real-time price instead of candle close
+        from data.market_data import get_current_price
+        rt_price = get_current_price(symbol)
+        current_price = rt_price if rt_price > 0 else df["close"].values.astype(float)[-1]
+
+        close = df["close"].values.astype(float)
         
         # === ATR Calculation ===
         atr = self._calculate_atr(high, low, close, config.ATR_PERIOD)

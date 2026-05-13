@@ -103,7 +103,7 @@ def run_analysis():
 
                 # Agent 4: Risk
                 risk_agent = RiskAgent()
-                risk_result = risk_agent.calculate(df, overall, {})
+                risk_result = risk_agent.calculate(df, overall, {}, symbol=symbol)
 
                 # Summary
                 summary_parts = []
